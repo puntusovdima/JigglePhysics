@@ -153,6 +153,28 @@ public class JiggleJobs {
         }
     }
 
+    /// <summary>
+    /// Carries a tree's simulated state along with an instant move of its bones; see JiggleMemoryBus.TeleportTree.
+    /// </summary>
+    public bool Teleport(JiggleTree tree) {
+        CompleteAll();
+        return _memoryBus.TeleportTree(tree);
+    }
+
+    private void CompleteAll() {
+        if (hasHandleBulkRead) handleBulkRead.Complete();
+        if (hasHandleBulkReset) handleBulkReset.Complete();
+        if (hasHandleRootRead) handleRootRead.Complete();
+        if (hasHandleSimulate) handleSimulate.Complete();
+        if (hasHandleTransformWrite) handleTransformWrite.Complete();
+        if (hasHandleInterpolate) handleInterpolate.Complete();
+        if (hasHandlePersonalColliderRead) handlePersonalColliderRead.Complete();
+        if (hasHandleSceneColliderRead) handleSceneColliderRead.Complete();
+        if (hasHandleBroadPhase) handleBroadPhase.Complete();
+        if (hasHandleBroadPhaseClear) handleBroadPhaseClear.Complete();
+        if (hasHandleInputInterpolate) handleInputInterpolate.Complete();
+    }
+
     public void FreeOnComplete(IntPtr pointer) {
         freePointers.Add(pointer);
     }

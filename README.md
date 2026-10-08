@@ -5,7 +5,7 @@
 > - Editing a JiggleRig in Play mode (or animated parameters) keeps each bone on its own rig's settings and keeps excluded roots rigid. Upstream applied one rig's values to the whole merged tree. Play-mode edits also no longer re-sample the rest pose from the simulated pose.
 > - `JiggleRig.Teleport()`: call it right after moving a character instantly, and the simulation is carried along instead of whipping and stretching.
 >
-> Install with `https://github.com/puntusovdima/JigglePhysics.git#v16.0.1-cps.1`.
+> Install with `https://github.com/puntusovdima/JigglePhysics.git#v16.0.1-cps.2`.
 
 This readme is a work in progress as we incorporate features and demos, check back later!
 

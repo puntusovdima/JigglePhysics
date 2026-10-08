@@ -940,9 +940,10 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
 
     /// <summary>
     /// Moves a committed tree's whole simulated state (points, input pose history, output and interpolation poses) by
-    /// the rigid jump its first real bone made since the last capture, so an instant move reads as no motion at all.
+    /// the rigid jump its first real bone's frame made since the last capture, so an instant move reads as no motion.
     /// Jobs touching the bus must be complete. Returns false when the tree is not on the bus yet (a tree that is still
-    /// being added starts from the bones' current pose anyway).
+    /// being added starts from the bones' current pose anyway). The managed copies need no update: a tree commit reads
+    /// the native arrays into them (ReadIn) before writing them back, within the same call.
     /// </summary>
     public unsafe bool TeleportTree(JiggleTree jiggleTree) {
         for (int i = 0; i < treeCount; i++) {
@@ -951,7 +952,10 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             int offset = (int)tree.transformIndexOffset;
             int count = (int)tree.pointCount;
 
-            // The capture job skips virtual slots, so the jump is measured on the first real bone.
+            // The jump is measured on the first real bone (the capture job skips virtual slots): "before" is its captured
+            // input pose, "after" is where the same local pose sits under its parent now. The bone's own world pose can't
+            // be used, because the transform-write job has put the simulated pose on it, which would fold the bone's
+            // current swing into the jump.
             int anchor = -1;
             for (int o = 0; o < count; o++) {
                 if (!inputPosesCurrent[offset + o].isVirtual && jiggleTree.bones[o]) {
@@ -961,62 +965,48 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             }
             if (anchor == -1) return false;
             var before = inputPosesCurrent[offset + anchor];
-            jiggleTree.bones[anchor].GetPositionAndRotation(out var afterPosition, out var afterRotation);
-            var turn = math.mul((quaternion)afterRotation, math.inverse(before.rotation));
-            var move = new RigidMove { from = before.position, to = afterPosition, turn = turn };
+            var local = restPoseTransforms[offset + anchor];
+            var parent = jiggleTree.bones[anchor].parent;
+            float3 afterPosition = parent ? (float3)parent.TransformPoint(local.position) : local.position;
+            quaternion afterRotation = parent ? math.mul(parent.rotation, local.rotation) : local.rotation;
+            var turn = math.mul(afterRotation, math.inverse(before.rotation));
+            var jump = new RigidTransform(turn, afterPosition - math.rotate(turn, before.position));
 
             for (int o = 0; o < count; o++) {
                 var point = tree.points[o];
-                point.position = move.Point(point.position);
-                point.lastPosition = move.Point(point.lastPosition);
-                point.workingPosition = move.Point(point.workingPosition);
-                point.pose = move.Point(point.pose);
-                point.parentPose = move.Point(point.parentPose);
+                point.position = math.transform(jump, point.position);
+                point.lastPosition = math.transform(jump, point.lastPosition);
+                point.workingPosition = math.transform(jump, point.workingPosition);
+                point.pose = math.transform(jump, point.pose);
+                point.parentPose = math.transform(jump, point.parentPose);
                 tree.points[o] = point;
             }
             for (int j = offset; j < offset + count; j++) {
-                inputPosesPrevious[j] = move.Pose(inputPosesPrevious[j]);
-                inputPosesCurrent[j] = move.Pose(inputPosesCurrent[j]);
-                simulateInputPoses[j] = move.Pose(simulateInputPoses[j]);
-                interpolationOutputPoses[j] = move.Pose(interpolationOutputPoses[j]);
-                simulationOutputPoseData[j] = move.Pose(simulationOutputPoseData[j]);
-                interpolationCurrentPoseData[j] = move.Pose(interpolationCurrentPoseData[j]);
-                interpolationPreviousPoseData[j] = move.Pose(interpolationPreviousPoseData[j]);
-                rootOutputPositions[j] = move.Point(rootOutputPositions[j]);
-                // The managed copies are written back over the native arrays when a tree commit finishes.
-                inputPosesPreviousArray[j] = move.Pose(inputPosesPreviousArray[j]);
-                inputPosesCurrentArray[j] = move.Pose(inputPosesCurrentArray[j]);
-                simulateInputPosesArray[j] = move.Pose(simulateInputPosesArray[j]);
-                interpolationOutputPosesArray[j] = move.Pose(interpolationOutputPosesArray[j]);
-                simulationOutputPoseDataArray[j] = move.Pose(simulationOutputPoseDataArray[j]);
-                interpolationCurrentPoseDataArray[j] = move.Pose(interpolationCurrentPoseDataArray[j]);
-                interpolationPreviousPoseDataArray[j] = move.Pose(interpolationPreviousPoseDataArray[j]);
-                rootOutputPositionsArray[j] = move.Point(rootOutputPositionsArray[j]);
+                inputPosesPrevious[j] = Move(jump, inputPosesPrevious[j]);
+                inputPosesCurrent[j] = Move(jump, inputPosesCurrent[j]);
+                simulateInputPoses[j] = Move(jump, simulateInputPoses[j]);
+                interpolationOutputPoses[j] = Move(jump, interpolationOutputPoses[j]);
+                simulationOutputPoseData[j] = Move(jump, simulationOutputPoseData[j]);
+                interpolationCurrentPoseData[j] = Move(jump, interpolationCurrentPoseData[j]);
+                interpolationPreviousPoseData[j] = Move(jump, interpolationPreviousPoseData[j]);
+                rootOutputPositions[j] = math.transform(jump, rootOutputPositions[j]);
             }
             return true;
         }
         return false;
     }
 
-    private struct RigidMove {
-        public float3 from;
-        public float3 to;
-        public quaternion turn;
+    private static JiggleTransform Move(RigidTransform jump, JiggleTransform pose) {
+        pose.position = math.transform(jump, pose.position);
+        pose.rotation = math.mul(jump.rot, pose.rotation);
+        return pose;
+    }
 
-        public float3 Point(float3 p) => to + math.mul(turn, p - from);
-
-        public JiggleTransform Pose(JiggleTransform pose) {
-            pose.position = Point(pose.position);
-            pose.rotation = math.mul(turn, pose.rotation);
-            return pose;
-        }
-
-        public PoseData Pose(PoseData data) {
-            data.pose = Pose(data.pose);
-            data.rootPosition = Point(data.rootPosition);
-            data.rootOffset = math.mul(turn, data.rootOffset);
-            return data;
-        }
+    private static PoseData Move(RigidTransform jump, PoseData data) {
+        data.pose = Move(jump, data.pose);
+        data.rootPosition = math.transform(jump, data.rootPosition);
+        data.rootOffset = math.rotate(jump.rot, data.rootOffset);
+        return data;
     }
 
     public void ScheduleAdd(JiggleTree jiggleTree) {

@@ -238,20 +238,43 @@ public static class JigglePhysics {
     /// <summary>
     /// Recomputes the parameters of every point in the tree <paramref name="segment"/> belongs to, exactly as the tree
     /// was built: each bone takes the parameters of the rig that owns it (nested rigs included), and excluded roots stay
-    /// rigid. Rebuilds the tree instead when its structure no longer matches.
+    /// rigid. Rebuilds the tree instead when its bones or personal colliders changed.
     /// </summary>
     public static void UpdateTreeParameters(JiggleTreeSegment segment) {
         var root = segment.root;
         var tree = root.jiggleTree;
-        if (tree == null || tree.dirty) {
+        if (tree == null || tree.dirty || !root.transform || !root.jiggleRigData.rootBone) {
             return;
         }
         BuildTreeLists(root.jiggleRigData);
-        if (tempParameters.Count != tree.points.Length) {
+        if (!TempListsMatch(tree)) {
             root.SetDirty();
             return;
         }
+        jobs?.CompleteRunningJobs(); // the simulate job reads the parameter buffer this overwrites
         tree.SetParameters(tempParameters);
+    }
+
+    // Whether the temp lists describe the same bones and personal colliders as the tree, point for point.
+    private static bool TempListsMatch(JiggleTree tree) {
+        var boneCount = tree.bones.Length;
+        var colliderCount = tree.personalColliders.Length;
+        if (tempTransforms.Count != boneCount || tempParameters.Count != tree.points.Length
+            || tempColliders.Count != colliderCount || tempColliderTransforms.Count != tree.personalColliderTransforms.Length) {
+            return false;
+        }
+        for (int i = 0; i < boneCount; i++) {
+            if (tempTransforms[i] != tree.bones[i]) return false;
+        }
+        for (int i = 0; i < colliderCount; i++) {
+            var a = tempColliders[i];
+            var b = tree.personalColliders[i];
+            if (tempColliderTransforms[i] != tree.personalColliderTransforms[i] || a.type != b.type || a.radius != b.radius
+                || a.height != b.height || a.capsuleAxis != b.capsuleAxis) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>
@@ -271,7 +294,8 @@ public static class JigglePhysics {
     private static void UpdateAnimatedParameters() {
         tempAnimatedRoots.Clear();
         foreach (var segment in jiggleRootLookup.Values) {
-            if (segment.HasAnimatedParameters) {
+            // A rig destroyed without OnDisable stays in the lookup until GetJiggleTrees prunes it, which runs later.
+            if (segment.HasAnimatedParameters && segment.transform) {
                 tempAnimatedRoots.Add(segment.root);
             }
         }

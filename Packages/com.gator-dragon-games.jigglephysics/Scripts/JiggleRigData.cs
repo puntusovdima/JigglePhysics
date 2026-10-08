@@ -161,11 +161,18 @@ public struct JiggleRigData {
         var scale = t.lossyScale;
         currentLength += Vector3.Distance(lastPosition, t.position);
         t.GetLocalPositionAndRotation(out var localPosition, out var localRotation);
+        var restLocalRotation = new Vector4(localRotation.x, localRotation.y, localRotation.z, localRotation.w);
+        // In Play mode the bones hold the simulated pose, not the rest pose (OnValidate runs this on every Inspector
+        // edit), so a bone already in the cache keeps the rest pose it was authored with.
+        if (Application.isPlaying && transformToCachedDataMap != null && transformToCachedDataMap.TryGetValue(t, out var authored)) {
+            localPosition = authored.restLocalPosition;
+            restLocalRotation = authored.restLocalRotation;
+        }
         var position = t.position;
         data.Add(new JiggleTransformCachedData() {
             bone = t,
             restLocalPosition = localPosition,
-            restLocalRotation = new Vector4(localRotation.x, localRotation.y, localRotation.z, localRotation.w),
+            restLocalRotation = restLocalRotation,
             normalizedDistanceFromRoot = currentLength / totalLength,
             lossyScale = (scale.x + scale.y + scale.z)/3f,
         });
@@ -240,6 +247,7 @@ public struct JiggleRigData {
     /// </summary>
     /// <param name="tree">Tree to update</param>
     /// <param name="parameters">empty list purely used to prevent allocations</param>
+    [Obsolete("Applies this rig's values to every bone of the tree, which breaks nested rigs and excluded roots. Use JiggleRig.UpdateParameters() or JigglePhysics.UpdateTreeParameters().")]
     public void UpdateParameters(JiggleTree tree, List<JigglePointParameters> parameters) {
         parameters.Clear();
         var bones = tree.bones;

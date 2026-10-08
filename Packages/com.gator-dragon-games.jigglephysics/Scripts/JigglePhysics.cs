@@ -281,12 +281,13 @@ public static class JigglePhysics {
     /// Carries the whole tree <paramref name="segment"/> belongs to along with an instant move of its bones, so the
     /// jump is not read as speed. Call it right after moving the character.
     /// </summary>
-    public static void Teleport(JiggleTreeSegment segment) {
+    /// <returns>False when the tree is not simulating yet; it then starts from the bones' current pose anyway.</returns>
+    public static bool Teleport(JiggleTreeSegment segment) {
         var tree = segment.root.jiggleTree;
         if (tree == null || jobs == null) {
-            return;
+            return false;
         }
-        jobs.Teleport(tree);
+        return jobs.Teleport(tree);
     }
 
     private static readonly HashSet<JiggleTreeSegment> tempAnimatedRoots = new();

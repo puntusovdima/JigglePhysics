@@ -43,6 +43,7 @@ public class JiggleTreeSegment {
         SetDirty();
     }
 
+    [System.Obsolete("Animated parameters are applied by JigglePhysics for every segment; call UpdateParameters() to push an edit.")]
     public void UpdateParametersIfNeeded() {
         if (HasAnimatedParameters) {
             JigglePhysics.UpdateTreeParameters(this);

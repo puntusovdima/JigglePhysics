@@ -938,6 +938,87 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         }
     }
 
+    /// <summary>
+    /// Moves a committed tree's whole simulated state (points, input pose history, output and interpolation poses) by
+    /// the rigid jump its first real bone made since the last capture, so an instant move reads as no motion at all.
+    /// Jobs touching the bus must be complete. Returns false when the tree is not on the bus yet (a tree that is still
+    /// being added starts from the bones' current pose anyway).
+    /// </summary>
+    public unsafe bool TeleportTree(JiggleTree jiggleTree) {
+        for (int i = 0; i < treeCount; i++) {
+            var tree = jiggleTreeStructs[i];
+            if (tree.rootID != jiggleTree.rootID) continue;
+            int offset = (int)tree.transformIndexOffset;
+            int count = (int)tree.pointCount;
+
+            // The capture job skips virtual slots, so the jump is measured on the first real bone.
+            int anchor = -1;
+            for (int o = 0; o < count; o++) {
+                if (!inputPosesCurrent[offset + o].isVirtual && jiggleTree.bones[o]) {
+                    anchor = o;
+                    break;
+                }
+            }
+            if (anchor == -1) return false;
+            var before = inputPosesCurrent[offset + anchor];
+            jiggleTree.bones[anchor].GetPositionAndRotation(out var afterPosition, out var afterRotation);
+            var turn = math.mul((quaternion)afterRotation, math.inverse(before.rotation));
+            var move = new RigidMove { from = before.position, to = afterPosition, turn = turn };
+
+            for (int o = 0; o < count; o++) {
+                var point = tree.points[o];
+                point.position = move.Point(point.position);
+                point.lastPosition = move.Point(point.lastPosition);
+                point.workingPosition = move.Point(point.workingPosition);
+                point.pose = move.Point(point.pose);
+                point.parentPose = move.Point(point.parentPose);
+                tree.points[o] = point;
+            }
+            for (int j = offset; j < offset + count; j++) {
+                inputPosesPrevious[j] = move.Pose(inputPosesPrevious[j]);
+                inputPosesCurrent[j] = move.Pose(inputPosesCurrent[j]);
+                simulateInputPoses[j] = move.Pose(simulateInputPoses[j]);
+                interpolationOutputPoses[j] = move.Pose(interpolationOutputPoses[j]);
+                simulationOutputPoseData[j] = move.Pose(simulationOutputPoseData[j]);
+                interpolationCurrentPoseData[j] = move.Pose(interpolationCurrentPoseData[j]);
+                interpolationPreviousPoseData[j] = move.Pose(interpolationPreviousPoseData[j]);
+                rootOutputPositions[j] = move.Point(rootOutputPositions[j]);
+                // The managed copies are written back over the native arrays when a tree commit finishes.
+                inputPosesPreviousArray[j] = move.Pose(inputPosesPreviousArray[j]);
+                inputPosesCurrentArray[j] = move.Pose(inputPosesCurrentArray[j]);
+                simulateInputPosesArray[j] = move.Pose(simulateInputPosesArray[j]);
+                interpolationOutputPosesArray[j] = move.Pose(interpolationOutputPosesArray[j]);
+                simulationOutputPoseDataArray[j] = move.Pose(simulationOutputPoseDataArray[j]);
+                interpolationCurrentPoseDataArray[j] = move.Pose(interpolationCurrentPoseDataArray[j]);
+                interpolationPreviousPoseDataArray[j] = move.Pose(interpolationPreviousPoseDataArray[j]);
+                rootOutputPositionsArray[j] = move.Point(rootOutputPositionsArray[j]);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private struct RigidMove {
+        public float3 from;
+        public float3 to;
+        public quaternion turn;
+
+        public float3 Point(float3 p) => to + math.mul(turn, p - from);
+
+        public JiggleTransform Pose(JiggleTransform pose) {
+            pose.position = Point(pose.position);
+            pose.rotation = math.mul(turn, pose.rotation);
+            return pose;
+        }
+
+        public PoseData Pose(PoseData data) {
+            data.pose = Pose(data.pose);
+            data.rootPosition = Point(data.rootPosition);
+            data.rootOffset = math.mul(turn, data.rootOffset);
+            return data;
+        }
+    }
+
     public void ScheduleAdd(JiggleTree jiggleTree) {
         pendingCommands.Add(new AddRemoveCommand() {
             commandType = AddRemoveCommand.CommandType.Add,
